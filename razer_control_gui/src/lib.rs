@@ -2,7 +2,7 @@
 
 use serde::{Serialize, Deserialize};
 
-pub const DEVICE_FILE: &str = "/usr/share/razercontrol/laptops.json";
+pub const DEVICE_FILE: &str = "/home/josh/.local/share/razercontrol/laptops.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupportedDevice {

@@ -72,7 +72,7 @@ impl RazerPacket {
     }
 }
 
-const DEVICE_FILE: &str = "/usr/share/razercontrol/laptops.json";
+const DEVICE_FILE: &str = "/home/josh/.local/share/razercontrol/laptops.json";
 pub struct DeviceManager {
     pub device: Option <RazerLaptop>,
     supported_devices: Vec<SupportedDevice>,
@@ -507,17 +507,36 @@ impl DeviceManager {
         // self.device = Some(device);
     // }
 
+    // pub fn find_supported_device(&mut self, vid: u16, pid: u16) -> Option<&SupportedDevice> {
+    //     for device in &self.supported_devices {
+    //         // Unwrap: we control the strings and know they are are valid
+    //         let svid = u16::from_str_radix(&device.vid, 16).unwrap();
+    //         let spid = u16::from_str_radix(&device.pid, 16).unwrap();
+
+    //         if svid == vid && spid == pid {
+    //             return Some(device);
+    //         }
+    //     }
+
+    //     None
+    // }
+
     pub fn find_supported_device(&mut self, vid: u16, pid: u16) -> Option<&SupportedDevice> {
+        println!("Looking for device: VID={:04x} PID={:04x}", vid, pid);
+        println!("Supported devices count: {}", self.supported_devices.len());
+        
         for device in &self.supported_devices {
-            // Unwrap: we control the strings and know they are are valid
             let svid = u16::from_str_radix(&device.vid, 16).unwrap();
             let spid = u16::from_str_radix(&device.pid, 16).unwrap();
+            println!("Checking against: {} VID={:04x} PID={:04x}", device.name, svid, spid);
 
             if svid == vid && spid == pid {
+                println!("MATCH FOUND: {}", device.name);
                 return Some(device);
             }
         }
-
+        
+        println!("No match found");
         None
     }
 
@@ -525,15 +544,21 @@ impl DeviceManager {
         // Check if socket is OK
         match HidApi::new() {
             Ok(api) => {
-                let devices = api.device_list()
+                println!("HidApi initialized successfully");
+                let all_devices: Vec<_> = api.device_list().collect();
+                println!("Found {} total HID devices", all_devices.len());
+                
+                let razer_devices: Vec<_> = all_devices.iter()
                     .filter(|d| d.vendor_id() == RAZER_VENDOR_ID)
-                    .filter(|d| d.interface_number() == 0);
-
-                for device in devices {
-
+                    .collect();
+                println!("Found {} Razer devices", razer_devices.len());
+                
+                for device in razer_devices {
+                    println!("Razer device: VID={:04x} PID={:04x} Interface={}", 
+                            device.vendor_id(), device.product_id(), device.interface_number());
                     let result = self.find_supported_device(device.vendor_id(), device.product_id());
                     if let Some(supported_device) = result {
-
+                        println!("Device matches supported list: {}", supported_device.name);
                         match api.open_path(device.path()) {
                             Ok(dev) => {
                                 self.device = Some(RazerLaptop::new(
