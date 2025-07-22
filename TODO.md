@@ -2,19 +2,20 @@
 
 ## High Priority
 
-- [ ] Update code to use generic paths instead of personal home paths for Bazzite compatibility (immutable OS)
-- [ ] **Remove RGB/Lighting Components** - Focus project on power/fan control only
-  - [ ] Remove entire `razer_control_gui/src/daemon/kbd/` directory
-  - [ ] Remove RGB-related code from `device.rs` (brightness, logo, effects methods)
-  - [ ] Remove `brightness` and `logo_state` fields from `PowerConfig` struct
-  - [ ] Remove RGB commands from `comms.rs` (SetEffect, SetBrightness, etc.)
-  - [ ] Strip RGB UI from `razer-settings.rs` (brightness, logo, color controls)
-  - [ ] Remove `driver_sysfs.rs` (RGB-only functionality)
+- [x] Update code to use generic paths instead of personal home paths for Bazzite compatibility (immutable OS)
+- [x] **Remove RGB/Lighting Components** - Focus project on power/fan control only ✅ COMPLETED
+  - [x] Remove entire `razer_control_gui/src/daemon/kbd/` directory
+  - [x] Remove RGB-related code from `device.rs` (brightness, logo, effects methods)
+  - [x] Remove `brightness` and `logo_state` fields from `PowerConfig` struct
+  - [x] Remove RGB commands from `comms.rs` (SetEffect, SetBrightness, etc.)
+  - [x] Strip RGB UI from `razer-settings.rs` (brightness, logo, color controls)
+  - [x] Remove `driver_sysfs.rs` (RGB-only functionality)
+  - [x] Fixed UI to conditionally show Battery Health tab only for supported devices
 - [ ] **OpenRazer Integration Strategy**
   - [ ] Document coexistence setup with OpenRazer for RGB
   - [ ] Create integration layer for power-state-aware lighting
   - [ ] Add modprobe blacklist instructions for laptop devices
-  - [ ] Update README to reflect power-only focus
+  - [x] Update README to reflect power-only focus
 
 ## Power Management Core
 - [ ] Add support for custom fan curves
