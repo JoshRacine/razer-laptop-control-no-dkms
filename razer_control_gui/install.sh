@@ -33,20 +33,36 @@ install() {
     # Install the files
     echo "Installing the files..."
     mkdir -p ~/.local/share/razercontrol
-    sudo bash <<EOF
-        mkdir -p /usr/share/razercontrol
-        cp target/release/razer-cli /usr/bin/
-        cp target/release/razer-settings /usr/bin/
-        if ls /usr/share/applications/*.desktop 1> /dev/null 2>&1; then
-            # We only install the desktop file if there are already desktop
-            # files on the system
-            cp data/gui/razer-settings.desktop /usr/share/applications/
-        fi
-        cp target/release/daemon /usr/share/razercontrol/
-        cp data/devices/laptops.json /usr/share/razercontrol/
-        cp data/udev/99-hidraw-permissions.rules /etc/udev/rules.d/
-        udevadm control --reload-rules
-EOF
+    mkdir -p ~/.local/bin
+    
+    # Install binaries to user local directory
+    cp target/release/razer-cli ~/.local/bin/
+    cp target/release/razer-settings ~/.local/bin/
+    cp target/release/daemon ~/.local/share/razercontrol/
+    cp data/devices/laptops.json ~/.local/share/razercontrol/
+    
+    # Install desktop file to user directory
+    if [ -d ~/.local/share/applications ]; then
+        mkdir -p ~/.local/share/applications
+        cp data/gui/razer-settings.desktop ~/.local/share/applications/
+        # Update the desktop file to use local paths
+        sed -i "s|/usr/bin/razer-settings|$HOME/.local/bin/razer-settings|g" ~/.local/share/applications/razer-settings.desktop
+    fi
+    
+    # Try to install udev rules (may fail on immutable OS, but that's ok)
+    if sudo cp data/udev/99-hidraw-permissions.rules /etc/udev/rules.d/ 2>/dev/null; then
+        sudo udevadm control --reload-rules
+        echo "✓ Installed udev rules"
+    else
+        echo "⚠ Could not install udev rules (immutable OS?) - you may need to run as root or use Flatpak"
+    fi
+    
+    # Add ~/.local/bin to PATH if not already there
+    if ! echo "$PATH" | grep -q "$HOME/.local/bin"; then
+        echo "Adding ~/.local/bin to PATH in ~/.bashrc"
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+        echo "⚠ Please run 'source ~/.bashrc' or restart your terminal"
+    fi
 
     if [ $? -ne 0 ]; then
         echo "An error occurred while installing the files"
@@ -79,19 +95,21 @@ EOF
 uninstall() {
     # Remove the files
     echo "Uninstalling the files..."
-    sudo bash <<EOF
-        rm -f /usr/bin/razer-cli
-        rm -f /usr/bin/razer-settings
-        rm -f /usr/share/applications/razer-settings.desktop
-        rm -f /usr/share/razercontrol/daemon
-        rm -f /usr/share/razercontrol/laptops.json
-        rm -f /etc/udev/rules.d/99-hidraw-permissions.rules
-        udevadm control --reload-rules
-EOF
-
-    if [ $? -ne 0 ]; then
-        echo "An error occurred while uninstalling the files"
-        exit 1
+    
+    # Remove user-local files
+    rm -f ~/.local/bin/razer-cli
+    rm -f ~/.local/bin/razer-settings
+    rm -f ~/.local/share/applications/razer-settings.desktop
+    rm -f ~/.local/share/razercontrol/daemon
+    rm -f ~/.local/share/razercontrol/laptops.json
+    rmdir ~/.local/share/razercontrol 2>/dev/null || true
+    
+    # Try to remove udev rules (may fail on immutable OS)
+    if sudo rm -f /etc/udev/rules.d/99-hidraw-permissions.rules 2>/dev/null; then
+        sudo udevadm control --reload-rules
+        echo "✓ Removed udev rules"
+    else
+        echo "⚠ Could not remove udev rules (immutable OS?)"
     fi
 
     # Stop the service

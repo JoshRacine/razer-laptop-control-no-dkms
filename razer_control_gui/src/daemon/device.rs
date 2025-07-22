@@ -72,7 +72,7 @@ impl RazerPacket {
     }
 }
 
-const DEVICE_FILE: &str = "/home/josh/.local/share/razercontrol/laptops.json";
+// Removed: now uses service::get_device_file_path()
 pub struct DeviceManager {
     pub device: Option <RazerLaptop>,
     supported_devices: Vec<SupportedDevice>,
@@ -123,33 +123,7 @@ impl DeviceManager {
         }
     }
 
-    pub fn set_sync(&mut self, sync: bool) -> bool {
-        let mut ac: usize = 0;
-        if let Some(laptop) = self.get_device() {
-            ac = laptop.ac_state as usize;
-        }
-        let other = (ac + 1) & 0x01;
-        if let Some(config) = self.get_config() {
-            config.sync = sync;
-            config.power[other].brightness = config.power[ac].brightness;
-            config.power[other].logo_state = config.power[ac].logo_state;
-            config.power[other].screensaver = config.power[ac].screensaver;
-            config.power[other].idle = config.power[ac].idle;
-            if let Err(e) = config.write_to_file() {
-                eprintln!("Error write config {:?}", e);
-            }
-        }
 
-        return true;
-    }
-
-    pub fn get_sync(&mut self) -> bool {
-        if let Some(config) = self.get_config() {
-            return config.sync;
-        }
-
-        return false;
-    }
 
     fn remove_watch(&mut self, proxy_idle: &dyn dbus_mutter_idlemonitor::OrgGnomeMutterIdleMonitor) {
         if let Ok(_) = proxy_idle.remove_watch(self.idle_id) {
@@ -167,7 +141,7 @@ impl DeviceManager {
     }
 
     pub fn read_laptops_file() -> io::Result<DeviceManager > {
-        let str: Vec<u8> = fs::read(DEVICE_FILE)?;
+        let str: Vec<u8> = fs::read(service::get_device_file_path())?;
         let mut res: DeviceManager = DeviceManager::new();
         res.supported_devices = serde_json::from_slice(str.as_slice())?;
         println!("suported devices found: {:?}", res.supported_devices.len());
@@ -193,51 +167,22 @@ impl DeviceManager {
         }
         if let Some(laptop) = self.get_device() {
             laptop.set_screensaver(true);
-            laptop.set_brightness(0);
-            laptop.set_logo_led_state(0);
         }
     }
 
     pub fn restore_light(&mut self) {
         self.add_active = false;
-        let mut brightness = 0;
-        let mut logo_state = 0;
-        let mut ac:usize = 0;
-        if let Some(laptop) = self.get_device() {
-            ac = laptop.get_ac_state();
-        }
-        if let Some(config) = self.get_ac_config(ac) {
-            brightness = config.brightness;
-            logo_state = config.logo_state;
-        }
         if let Some(laptop) = self.get_device() {
             laptop.set_screensaver(false);
-            laptop.set_brightness(brightness);
-            laptop.set_logo_led_state(logo_state);
         }
     }
 
-    pub fn restore_standard_effect(&mut self) {
-        let mut effect = 0;
-        let mut params: Vec<u8> = vec![];
-        if let Some(config) = self.get_config() {
-            effect = config.standard_effect;
-            params = config.standard_effect_params.clone();
-        }
-        if let Some(laptop) = self.get_device() {
-            laptop.set_standard_effect(effect, params);
-        }
-    }
 
     pub fn change_idle(&mut self, ac: usize, timeout: u32) -> bool {
         // let mut arm: bool = false;
         if let Some(config) = self.get_config() {
             if config.power[ac].idle != timeout {
                 config.power[ac].idle = timeout;
-                if config.sync {
-                    let other = (ac + 1) & 0x01;
-                    config.power[other].idle = timeout;
-                }
                 if let Err(e) = config.write_to_file() {
                     eprintln!("Error write config {:?}", e);
                 }
@@ -271,20 +216,6 @@ impl DeviceManager {
         return res;
     }
 
-    pub fn set_standard_effect(&mut self, effect_id: u8, params: Vec<u8>) -> bool {
-        if let Some(config) = self.get_config() {
-            config.standard_effect = effect_id;
-            config.standard_effect_params = params.clone();
-            if let Err(e) = config.write_to_file() {
-                eprintln!("Error write config {:?}", e);
-            }
-        }
-        if let Some(laptop) = self.get_device() {
-            laptop.set_standard_effect(effect_id, params);
-        }
-
-        return true;
-    }
 
     pub fn set_fan_rpm(&mut self, ac:usize, rpm: i32) -> bool {
         let mut res: bool = false;
@@ -307,93 +238,9 @@ impl DeviceManager {
         return res;
     }
 
-    pub fn set_logo_led_state(&mut self, ac:usize, logo_state: u8) -> bool {
-        let mut res: bool = false;
-        if let Some(config) = self.get_config() {
-            config.power[ac].logo_state = logo_state;
-            if config.sync {
-                let other = (ac + 1) & 0x01;
-                config.power[other].logo_state = logo_state;
-            }
-            if let Err(e) = config.write_to_file() {
-                eprintln!("Error write config {:?}", e);
-            }
-        }
-             
-        if let Some(laptop) = self.get_device() {
-            let state = laptop.get_ac_state();
-           
-            if state != ac {
-                res = true;
-            } else {
-                res = laptop.set_logo_led_state(logo_state);
-            }
-        }
 
-        return res;
-    }
 
-    pub fn get_logo_led_state(&mut self, ac: usize) -> u8 {
-        // if let Some(laptop) = self.get_device() {
-            // if laptop.ac_state as usize == ac {
-                // return laptop.get_logo_led_state();
-            // }
-        // }
-    
-        if let Some(config) = self.get_ac_config(ac) {
-            return config.logo_state;
-        }
 
-        return 0;
-    }
-
-    pub fn set_brightness(&mut self, ac:usize, brightness: u8) -> bool {
-        let mut res: bool = false;
-        let _val = brightness as u16  * 255 / 100;
-        if let Some(config) = self.get_config() {
-            config.power[ac].brightness = _val as u8;
-            if config.sync {
-                let other = (ac + 1) & 0x01;
-                config.power[other].brightness = _val as u8;
-            }
-            if let Err(e) = config.write_to_file() {
-                eprintln!("Error write config {:?}", e);
-            }
-        }
- 
-        if let Some(laptop) = self.get_device() {
-            let state = laptop.get_ac_state();
-            if state != ac {
-                res = true;
-            } else {
-                res = laptop.set_brightness(_val as u8);
-            }
-        }
-
-        return res;
-    }
-
-    pub fn get_brightness(&mut self, ac: usize) -> u8 {
-        if let Some(laptop) = self.get_device() {
-            if laptop.ac_state as usize == ac {
-                let val = laptop.get_brightness() as u32;
-                let mut perc = val * 100 * 100/ 255;
-                perc += 50;
-                perc /= 100;
-                return perc as u8;
-            }
-        }
-
-        if let Some(config) = self.get_ac_config(ac) {
-            let val = config.brightness as u32;
-            let mut perc = val * 100 * 100/ 255;
-            perc += 50;
-            perc /= 100;
-            return perc as u8;
-        }
-
-        return 0
-    }
 
     pub fn get_fan_rpm(&mut self, ac: usize) -> i32 {
         if let Some(laptop) = self.get_device() {
@@ -595,23 +442,6 @@ pub struct RazerLaptop {
 }
 //
 impl RazerLaptop {
-// LED STORAGE Options
-    const NOSTORE:u8 = 0x00;
-    const VARSTORE:u8 = 0x01;
-// LED definitions
-    const LOGO_LED:u8 = 0x04;
-    const BACKLIGHT_LED:u8 = 0x05;
-// effects
-    pub const OFF:u8 = 0x00;
-    pub const WAVE:u8 = 0x01;
-    pub const REACTIVE:u8 = 0x02; // Afterglo
-    #[allow(dead_code)]
-    pub const BREATHING:u8 = 0x03;
-    pub const SPECTRUM:u8 = 0x04;
-    pub const CUSTOMFRAME:u8 = 0x05;
-    pub const STATIC:u8 = 0x06;
-    #[allow(dead_code)]
-    pub const STARLIGHT:u8 = 0x19;
 
     pub fn new(name: String, features: Vec<String>, fan: Vec<u16>, device: hidapi::HidDevice) -> RazerLaptop {
         return RazerLaptop{
@@ -633,13 +463,6 @@ impl RazerLaptop {
     pub fn set_config(&mut self, config: config::PowerConfig) -> bool {
         let mut ret: bool = false;
 
-        if !self.screensaver {
-            ret |= self.set_brightness(config.brightness);
-            ret |= self.set_logo_led_state(config.logo_state);
-        } else {
-            ret |= self.set_brightness(0);
-            ret |= self.set_logo_led_state(0);
-        }
         ret |= self.set_power_mode(config.power_mode, config.cpu_boost, config.gpu_boost);
         ret |= self.set_fan_rpm(config.fan_rpm as u16);
 
@@ -690,46 +513,8 @@ impl RazerLaptop {
         return value;
     }
 
-    pub fn set_standard_effect(&mut self, effect_id: u8, params: Vec<u8>) -> bool {
-        let mut report: RazerPacket = RazerPacket::new(0x03, 0x0a, 80);
-        report.args[0] = effect_id; // effect id
-        if !params.is_empty() {
-            for idx in 0..params.len() {
-                report.args[idx+1] = params[idx];
-            }
-        }
-        if let Some(_) = self.send_report(report) {
-            return true;
-        }
 
-        return false;
-    }
 
-    pub fn set_custom_frame_data(&mut self, row: u8, data: Vec<u8>) {
-        // if data.len() == kbd::board::KEYS_PER_ROW {
-        if data.len() == 45 {
-            let mut report: RazerPacket = RazerPacket::new(0x03, 0x0b, 0x34);
-            report.args[0] = 0xff;
-            report.args[1] = row;
-            report.args[2] = 0x00; // start col
-            report.args[3] = 0x0f; // end col
-            for idx in 0..data.len() {
-                report.args[idx + 7] = data[idx];
-            }
-            self.send_report(report);
-        }
-    }
-
-    pub fn set_custom_frame(&mut self) -> bool {
-        let mut report: RazerPacket = RazerPacket::new(0x03, 0x0a, 0x02);
-        report.args[0] = RazerLaptop::CUSTOMFRAME; // effect id
-        report.args[1] = RazerLaptop::NOSTORE;
-        if let Some(_) = self.send_report(report) {
-            return true;
-        }
-
-        return false;
-    }
 
     pub fn get_power_mode(&mut self, zone: u8) -> u8 {
         let mut report: RazerPacket = RazerPacket::new(0x0d, 0x82, 0x04);
@@ -867,63 +652,9 @@ impl RazerLaptop {
         return res * 100;
     }
 
-    pub fn set_logo_led_state(&mut self, mode: u8) -> bool {
-        if mode > 0 {
-            let mut report: RazerPacket = RazerPacket::new(0x03, 0x02, 0x03);
-            report.args[0] = RazerLaptop::VARSTORE;
-            report.args[1] = RazerLaptop::LOGO_LED;
-            if mode == 1 {
-                report.args[2] = 0x00;
-            } else if mode == 2 {
-                report.args[2] = 0x02;
-            }
-            self.send_report(report);
-        }
 
-        let mut report: RazerPacket = RazerPacket::new(0x03, 0x00, 0x03);
-        report.args[0] = RazerLaptop::VARSTORE;
-        report.args[1] = RazerLaptop::LOGO_LED;
-        report.args[2] = self.clamp_u8(mode, 0x00, 0x01);
-        if let Some(_) = self.send_report(report) {
-            return true;
-        }
 
-        return false;
-    }
 
-    #[allow(dead_code)]
-    pub fn get_logo_led_state(&mut self) -> u8 {
-        let mut report: RazerPacket = RazerPacket::new(0x03, 0x82, 0x03);
-        report.args[0] = RazerLaptop::VARSTORE;
-        report.args[1] = RazerLaptop::LOGO_LED;
-        if let Some(response) = self.send_report(report){
-            return response.args[2];
-        }
-        return 0;
-    }
-
-    pub fn set_brightness(&mut self, brightness: u8) -> bool {
-        let mut report: RazerPacket = RazerPacket::new(0x03, 0x03, 0x03);
-        report.args[0] = RazerLaptop::VARSTORE;
-        report.args[1] = RazerLaptop::BACKLIGHT_LED;
-        report.args[2] = brightness;
-        if let Some(_) = self.send_report(report) {
-            return true;
-        }
-
-        return false;
-    }
-
-    pub fn get_brightness(&mut self) -> u8 {
-        let mut report: RazerPacket = RazerPacket::new(0x03, 0x83, 0x03);
-        report.args[0] = RazerLaptop::VARSTORE;
-        report.args[1] = RazerLaptop::BACKLIGHT_LED;
-        report.args[2] = 0x00;
-        if let Some(response) = self.send_report(report){
-            return response.args[2];
-        }
-        return 0;
-    }
 
     pub fn get_bho(&mut self) -> Option<u8> {
         if !self.have_feature("bho".to_string()) {

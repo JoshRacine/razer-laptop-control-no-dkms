@@ -4,7 +4,7 @@ use gtk::prelude::*;
 use gtk::{Application, ApplicationWindow};
 use gtk::{
     Box, Label, Scale, Stack, StackSwitcher, Switch, ToolItem, Toolbar,
-    ComboBoxText, Button, ColorButton, LinkButton
+    ComboBoxText, LinkButton
 };
 use gtk::{glib, glib::clone};
         
@@ -85,91 +85,10 @@ fn set_bho(is_on: bool, threshold: u8) -> Option<bool> {
     }
 }
 
-fn get_brightness(ac: bool) -> Option<u8> {
-    let ac = if ac { 1 } else { 0 };
-    let response = send_data(comms::DaemonCommand::GetBrightness{ ac })?;
 
-    use comms::DaemonResponse::*;
-    match response {
-        GetBrightness { result } => {
-            Some(result)
-        }
-        response => {
-            // This should not happen
-            println!("Instead of GetBrightness got {response:?}");
-            None
-        }
-    }
-}
 
-fn set_brightness(ac: bool, val: u8) -> Option<bool> {
-    let ac = if ac { 1 } else { 0 };
-    let response = send_data(comms::DaemonCommand::SetBrightness { ac, val })?;
 
-    use comms::DaemonResponse::*;
-    match response {
-        SetBrightness { result } => {
-            Some(result)
-        }
-        response => {
-            // This should not happen
-            println!("Instead of SetBrightness got {response:?}");
-            None
-        }
-    }
-}
 
-fn get_logo(ac: bool) -> Option<u8> {
-    let ac = if ac { 1 } else { 0 };
-    let response = send_data(comms::DaemonCommand::GetLogoLedState{ ac })?;
-
-    use comms::DaemonResponse::*;
-    match response {
-        GetLogoLedState { logo_state } => {
-            Some(logo_state)
-        }
-        response => {
-            // This should not happen
-            println!("Instead of GetLogoLedState got {response:?}");
-            None
-        }
-    }
-}
-
-fn set_logo(ac: bool, logo_state: u8) -> Option<bool> {
-    let ac = if ac { 1 } else { 0 };
-    let response = send_data(comms::DaemonCommand::SetLogoLedState{ ac , logo_state })?;
-
-    use comms::DaemonResponse::*;
-    match response {
-        SetLogoLedState { result } => {
-            Some(result)
-        }
-        response => {
-            // This should not happen
-            println!("Instead of SetLogoLedState got {response:?}");
-            None
-        }
-    }
-}
-
-fn set_effect(name: &str, values: Vec<u8>) -> Option<bool> {
-    let response = send_data(comms::DaemonCommand::SetEffect {
-        name: name.into(), params: values
-    })?;
-
-    use comms::DaemonResponse::*;
-    match response {
-        SetEffect { result } => {
-            Some(result)
-        }
-        response => {
-            // This should not happen
-            println!("Instead of SetEffect got {response:?}");
-            None
-        }
-    }
-}
 
 fn get_power(ac: bool) -> Option<(u8, u8, u8)> {
     let ac = if ac { 1 } else { 0 };
@@ -274,7 +193,7 @@ fn main() {
     setup_panic_hook();
     gtk::init().or_crash("Failed to initialize GTK.");
 
-    let device_file = std::fs::read_to_string(service::DEVICE_FILE)
+    let device_file = std::fs::read_to_string(service::get_device_file_path())
         .or_crash("Failed to read the device file");
     let devices: Vec<SupportedDevice> = serde_json::from_str(&device_file)
         .or_crash("Failed to parse the device file");
@@ -303,7 +222,6 @@ fn main() {
 
         let ac_settings_page = make_page(true, device.clone());
         let battery_settings_page = make_page(false, device.clone());
-        let general_page = make_general_page();
         let about_page = make_about_page(device.clone());
 
         let stack = Stack::new();
@@ -311,7 +229,13 @@ fn main() {
 
         stack.add_titled(&ac_settings_page.master_container, "AC", "AC");
         stack.add_titled(&battery_settings_page.master_container, "Battery", "Battery");
-        stack.add_titled(&general_page.master_container, "General", "General");
+        
+        // Only add Battery Health tab if device supports BHO
+        if device.has_feature("bho") {
+            let general_page = make_general_page();
+            stack.add_titled(&general_page.master_container, "Battery Health", "Battery Health");
+        }
+        
         stack.add_titled(&about_page.master_container, "About", "About");
 
         stack.connect_screen_changed(|_, _| {
@@ -362,7 +286,6 @@ fn main() {
 
 fn make_page(ac: bool, device: SupportedDevice) -> SettingsPage {
     let fan_speed = get_fan_speed(ac).or_crash("Error reading fan speed");
-    let brightness = get_brightness(ac).or_crash("Error reading brightness");
     let power = get_power(ac);
 
     let min_fan_speed = *device.fan.get(0)
@@ -372,25 +295,6 @@ fn make_page(ac: bool, device: SupportedDevice) -> SettingsPage {
 
     let settings_page = SettingsPage::new();
 
-    // Logo section
-    if device.has_logo() {
-        let logo = get_logo(ac).or_crash("Error reading logo");
-        let settings_section = settings_page.add_section(Some("Logo"));
-            let label = Label::new(Some("Turn on logo"));
-            let logo_options = ComboBoxText::new();
-                logo_options.append_text("Off");
-                logo_options.append_text("On");
-                logo_options.append_text("Breathing");
-                logo_options.set_active(Some(logo as u32));
-            logo_options.connect_changed(move |options| {
-                let logo = options.active().or_crash("Illegal state") as u8;
-                set_logo(ac, logo);
-                let logo = get_logo(ac).or_crash("Error reading logo").clamp(0, 2);
-                options.set_active(Some(logo as u32));
-            });
-        let row = SettingsRow::new(&label, &logo_options);
-        settings_section.add_row(&row.master_container);
-    }
 
     // Power section
     if let Some(power) = power {
@@ -530,21 +434,6 @@ fn make_page(ac: bool, device: SupportedDevice) -> SettingsPage {
     let row = SettingsRow::new(&label, &scale);
     settings_section.add_row(&row.master_container);
 
-    // Keyboard Section
-    let settings_section = settings_page.add_section(Some("Keyboard"));
-        let label = Label::new(Some("Brightness"));
-        let scale = Scale::with_range(gtk::Orientation::Horizontal, 0f64, 100f64, 1f64);
-        scale.set_value(brightness as f64);
-        scale.set_width_request(100);
-        scale.connect_change_value(move |scale, stype, value| {
-            let value = value.clamp(0f64, 100f64);
-            set_brightness(ac, value as u8).or_crash("Error setting brigthness");
-            let brightness = get_brightness(ac).or_crash("Error reading brightness");
-            scale.set_value(brightness as f64);
-            return gtk::glib::Propagation::Stop;
-        });
-    let row = SettingsRow::new(&label, &scale);
-    settings_section.add_row(&row.master_container);
 
     settings_page
 }
@@ -554,91 +443,6 @@ fn make_general_page() -> SettingsPage {
 
     let page = SettingsPage::new();
 
-    // Keyboard Section
-    let settings_section = page.add_section(Some("Keyboard"));
-        let label = Label::new(Some("Effect"));
-        let effect_options = ComboBoxText::new();
-            effect_options.append_text("Static");
-            effect_options.append_text("Static Gradient");
-            effect_options.append_text("Wave Gradient");
-            effect_options.append_text("Breathing");
-            effect_options.set_active(Some(0));
-    let row = SettingsRow::new(&label, &effect_options);
-    settings_section.add_row(&row.master_container);
-        let label = Label::new(Some("Color 1"));
-        let color_picker = ColorButton::new();
-    let row = SettingsRow::new(&label, &color_picker);
-    settings_section.add_row(&row.master_container);
-        let label = Label::new(Some("Color 2"));
-        let color_picker_2 = ColorButton::new();
-    let row = SettingsRow::new(&label, &color_picker_2);
-    settings_section.add_row(&row.master_container);
-        let label = Label::new(Some("Write effect"));
-        let button = Button::with_label("Write");
-        button.connect_clicked(clone!(@weak effect_options, @weak color_picker, @weak color_picker_2 =>
-            move |_| {
-                let color = color_picker.color();
-                let red   = (color.red   / 256) as u8;
-                let green = (color.green / 256) as u8;
-                let blue  = (color.blue  / 256) as u8;
-
-                let color = color_picker_2.color();
-                let red2   = (color.red   / 256) as u8;
-                let green2 = (color.green / 256) as u8;
-                let blue2  = (color.blue  / 256) as u8;
-
-                let effect = effect_options.active().or_crash("Illegal state");
-                match effect {
-                    0 => {
-                        set_effect("static", vec![red, green, blue])
-                            .or_crash("Failed to set effect");
-                    },
-                    1 => {
-                        set_effect(
-                            "static_gradient",
-                            vec![red, green, blue, red2, green2, blue2]
-                        ).or_crash("Failed to set effect");
-                    },
-                    2 => {
-                        set_effect("wave_gradient",
-                            vec![red, green, blue, red2, green2, blue2]
-                        ).or_crash("Failed to set effect");
-                    }
-                    3 => {
-                        set_effect(
-                            "breathing_single",
-                            vec![red, green, blue, 10]
-                        ).or_crash("Failed to set effect");
-                    }
-                    _ => {}
-                }
-            }
-        ));
-    let row = SettingsRow::new(&label, &button);
-    settings_section.add_row(&row.master_container);
-
-
-    effect_options.connect_changed(clone!(@weak color_picker, @weak color_picker_2 =>
-        move |options| {
-            let logo = options.active().or_crash("Illegal state"); // Unwrap: There is always one active
-            
-            match logo {
-                0 => {
-                    // TODO: Color 1 visible
-                },
-                1 => {
-                    // TODO: Color 1 and 2 visible
-                },
-                2 => {
-                    // TODO: Color 1 and 2 visible
-                }
-                3 => {
-                    // TODO: Color 1, 2, and duration visible
-                }
-                _ => {}
-            }
-        }
-    ));
 
     // Battery Health Optimizer section
     if let Some(bho) = bho {

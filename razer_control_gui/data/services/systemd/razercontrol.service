@@ -3,7 +3,7 @@ Description=Razer laptop control daemon
 
 [Service]
 Type=simple
-ExecStart=/usr/share/razercontrol/daemon
+ExecStart=%h/.local/share/razercontrol/daemon
 
 [Install]
 WantedBy=default.target

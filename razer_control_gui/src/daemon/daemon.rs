@@ -14,7 +14,6 @@ use dbus::{Message, arg};
 #[path = "../comms.rs"]
 mod comms;
 mod config;
-mod kbd;
 mod device;
 mod battery;
 mod dbus_mutter_displayconfig;
@@ -22,10 +21,7 @@ mod dbus_mutter_idlemonitor;
 mod screensaver;
 mod login1;
 
-use crate::kbd::Effect;
-
 lazy_static! {
-    static ref EFFECT_MANAGER: Mutex<kbd::EffectManager> = Mutex::new(kbd::EffectManager::new());
     // static ref CONFIG: Mutex<config::Configuration> = {
         // match config::Configuration::read_from_config() {
             // Ok(c) => Mutex::new(c),
@@ -67,24 +63,12 @@ fn main() {
         if let Ok(online) = proxy_ac.online() {
             info!("AC0 online: {:?}", online);
             d.set_ac_state(online);
-            d.restore_standard_effect();
-            if let Ok(json) = config::Configuration::read_effects_file() {
-                EFFECT_MANAGER.lock().unwrap().load_from_save(json);
-            } else {
-                println!("No effects save, creating a new one");
-                // No effects found, start with a green static layer, just like synapse
-                EFFECT_MANAGER.lock().unwrap().push_effect(
-                    kbd::effects::Static::new(vec![0, 255, 0]), 
-                    [true; 90]
-                    );
-            }
         } else {
             println!("error getting current power state");
             std::process::exit(1);
         }
     }
 
-    start_keyboard_animator_task();
     start_screensaver_monitor_task();
     start_battery_monitor_task();
     let clean_thread = start_shutdown_task();
@@ -124,18 +108,6 @@ fn init_logging() {
     builder.init();
 }
 
-/// Handles keyboard animations
-pub fn start_keyboard_animator_task() -> JoinHandle<()> {
-    // Start the keyboard animator thread,
-    thread::spawn(|| {
-        loop {
-            if let Some(laptop) = DEV_MANAGER.lock().unwrap().get_device() {
-                EFFECT_MANAGER.lock().unwrap().update(laptop);
-            }
-            thread::sleep(std::time::Duration::from_millis(kbd::ANIMATION_SLEEP_MS));
-        }
-    })
-}
 
 fn start_screensaver_monitor_task() -> JoinHandle<()> {
     thread::spawn(move || {
@@ -269,10 +241,6 @@ pub fn start_shutdown_task() -> JoinHandle<()> {
         
         // If we reach this point, we have a signal and it is time to exit
         println!("Received signal, cleaning up");
-        let json = EFFECT_MANAGER.lock().unwrap().save();
-        if let Err(error) = config::Configuration::write_effects_save(json) {
-            error!("Error writing config {}", error);
-        }
         if std::fs::metadata(comms::SOCKET_PATH).is_ok() {
             std::fs::remove_file(comms::SOCKET_PATH).unwrap();
         }
@@ -308,86 +276,13 @@ pub fn process_client_request(cmd: comms::DaemonCommand) -> Option<comms::Daemon
             comms::DaemonCommand::SetFanSpeed { ac, rpm } => {
                 Some(comms::DaemonResponse::SetFanSpeed { result: d.set_fan_rpm(ac, rpm) })
             },
-            comms::DaemonCommand::SetLogoLedState{ ac, logo_state } => {
-                Some(comms::DaemonResponse::SetLogoLedState { result: d.set_logo_led_state(ac, logo_state) })
-            },
-            comms::DaemonCommand::SetBrightness { ac, val } => {
-                Some(comms::DaemonResponse::SetBrightness {result: d.set_brightness(ac, val) })
-            }
             comms::DaemonCommand::SetIdle { ac, val } => {
                 Some(comms::DaemonResponse::SetIdle { result: d.change_idle(ac, val) })
             }
-            comms::DaemonCommand::SetSync { sync } => {
-                Some(comms::DaemonResponse::SetSync { result: d.set_sync(sync) })
-            }
-            comms::DaemonCommand::GetBrightness{ac} =>  {
-                Some(comms::DaemonResponse::GetBrightness { result: d.get_brightness(ac)})
-            },
-            comms::DaemonCommand::GetLogoLedState{ac} => Some(comms::DaemonResponse::GetLogoLedState {logo_state: d.get_logo_led_state(ac) }),
-            comms::DaemonCommand::GetKeyboardRGB { layer } => {
-                let map = EFFECT_MANAGER.lock().unwrap().get_map(layer);
-                Some(comms::DaemonResponse::GetKeyboardRGB {
-                    layer,
-                    rgbdata: map,
-                })
-            }
-            comms::DaemonCommand::GetSync() => Some(comms::DaemonResponse::GetSync { sync: d.get_sync() }),
             comms::DaemonCommand::GetFanSpeed{ac} => Some(comms::DaemonResponse::GetFanSpeed { rpm: d.get_fan_rpm(ac)}),
             comms::DaemonCommand::GetPwrLevel{ac} => Some(comms::DaemonResponse::GetPwrLevel { pwr: d.get_power_mode(ac) }),
             comms::DaemonCommand::GetCPUBoost{ac} => Some(comms::DaemonResponse::GetCPUBoost { cpu: d.get_cpu_boost(ac) }),
             comms::DaemonCommand::GetGPUBoost{ac} => Some(comms::DaemonResponse::GetGPUBoost { gpu: d.get_gpu_boost(ac) }),
-            comms::DaemonCommand::SetEffect{ name, params } => {
-                let mut res = false;
-                if let Ok(mut k) = EFFECT_MANAGER.lock() {
-                    res = true;
-                    let effect = match name.as_str() {
-                        "static" => Some(kbd::effects::Static::new(params)),
-                        "static_gradient" => Some(kbd::effects::StaticGradient::new(params)),
-                        "wave_gradient" => Some(kbd::effects::WaveGradient::new(params)),
-                        "breathing_single" => Some(kbd::effects::BreathSingle::new(params)),
-                        _ => None
-                    };
-
-                    if let Some(laptop) = d.get_device() {
-                        if let Some(e) = effect {
-                            k.pop_effect(laptop); // Remove old layer
-                            k.push_effect(
-                                e,
-                                [true; 90]
-                                );
-                        } else {
-                            res = false
-                        }
-                    } else {
-                        res = false;
-                    }
-                }
-                Some(comms::DaemonResponse::SetEffect{result: res})
-            }
-
-            comms::DaemonCommand::SetStandardEffect{ name, params } => {
-                // TODO save standart effect may be struct ?
-                let mut res = false;
-                if let Some(laptop) = d.get_device() {
-                    if let Ok(mut k) = EFFECT_MANAGER.lock() {
-                        k.pop_effect(laptop); // Remove old layer
-                        let _res = match name.as_str() {
-                            "off" => d.set_standard_effect(device::RazerLaptop::OFF, params),
-                            "wave" => d.set_standard_effect(device::RazerLaptop::WAVE, params),
-                            "reactive" => d.set_standard_effect(device::RazerLaptop::REACTIVE, params),
-                            "breathing" => d.set_standard_effect(device::RazerLaptop::BREATHING, params),
-                            "spectrum" => d.set_standard_effect(device::RazerLaptop::SPECTRUM, params),
-                            "static" => d.set_standard_effect(device::RazerLaptop::STATIC, params),
-                            "starlight" => d.set_standard_effect(device::RazerLaptop::STARLIGHT, params), 
-                            _ => false,
-                        };
-                        res = _res;
-                    }
-                } else {
-                    res = false;
-                }
-                Some(comms::DaemonResponse::SetStandardEffect{result: res})
-            }
             comms::DaemonCommand::SetBatteryHealthOptimizer { is_on, threshold } => { 
                 return Some(comms::DaemonResponse::SetBatteryHealthOptimizer { result: d.set_bho_handler(is_on, threshold)});
             }

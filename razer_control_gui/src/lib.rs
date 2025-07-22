@@ -2,7 +2,12 @@
 
 use serde::{Serialize, Deserialize};
 
-pub const DEVICE_FILE: &str = "/home/josh/.local/share/razercontrol/laptops.json";
+pub fn get_device_file_path() -> String {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    format!("{}/.local/share/razercontrol/laptops.json", home)
+}
+
+pub const DEVICE_FILE: &str = "/usr/share/razercontrol/laptops.json"; // Fallback for backwards compatibility
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupportedDevice {
